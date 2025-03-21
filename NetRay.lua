@@ -82,14 +82,6 @@ local CompressionType = {
 	AUTO = 3
 }
 
--- Event Version Management
-local VersionCompatibility = {
-	STRICT = 1, -- Exact version match required
-	BACKWARD = 2, -- Client can be older than server
-	FORWARD = 3, -- Client can be newer than server
-	ANY = 4 -- Any version accepted
-}
-
 -- Circuit Breaker States
 local CircuitState = {
 	CLOSED = 1, -- Normal operation
@@ -248,7 +240,7 @@ local function rleCompress(data)
 end
 
 local function rleDecompress(data)
-	data = data[1]
+	data = data
 
 	local decompressed = {}
 	local i = 1
@@ -340,7 +332,7 @@ local function lzwCompress(data)
 end
 
 local function lzwDecompress(data)
-	data = data[1]
+	data = data
 	--	print("Input data length:", #data) -- Debug print to check the input data length
 
 	-- Read dictionary size from header
@@ -534,7 +526,7 @@ local function decompressTableData(data)
 end
 
 -- Enhanced compression function with auto selection
-local function compressData(data, preferredMethod)
+local function compressString(data, preferredMethod)
 	if type(data) ~= "string" and type(data) ~= "table" then
 		return data, CompressionType.NONE
 	end
@@ -613,19 +605,29 @@ local function compressData(data, preferredMethod)
 	end
 end
 
+local function compressData(data, preferredMethod)
+	
+	local encoded = BinaryEncoder.encode(data)
+	
+	if type(encoded) == "string" then
+		return compressString(encoded)
+	else
+		return compressTableData(encoded)
+	end
+end
+
 local function decompressData(data, compressionType)
 
-	if compressionType == CompressionType.NONE then
-		return data
-	elseif compressionType == CompressionType.RLE then
-		return rleDecompress(data)
+	local decompressedData
+	if compressionType == CompressionType.RLE then
+		decompressedData = rleDecompress(data)
 	elseif compressionType == CompressionType.LZW then
-		return lzwDecompress(data)
-	elseif type(data) == "table" and data.data and data.compressionInfo then
-		return decompressTableData(data)
+		decompressedData = lzwDecompress(data)
 	else
-		return data
+		decompressedData = data
 	end
+
+	return BinaryEncoder.decode(decompressedData)
 end
 
 local function deepCopy(original)
@@ -876,7 +878,7 @@ function NetRay:_setupClientEventReceiving()
 		-- Decompress data if needed
 		local args
 		if eventData.compressed then
-			args = decompressData(eventData.data, eventData.compressionType[1])
+			args = decompressData(eventData.data, eventData.compressionType)
 		else
 			args = eventData.data
 		end
@@ -967,7 +969,7 @@ function NetRay:_setupRequestSystem()
 			local args = requestData.args or {}
 			
 			if requestData.compressed then
-				args = decompressData(requestData.data, requestData.compressionType[1])
+				args = decompressData(requestData.data, requestData.compressionType)
 			else
 				args = unpack(requestData.args)
 			end
@@ -1045,7 +1047,6 @@ function NetRay:RegisterEvent(eventName, options)
 	local priority = options.priority or Priority.MEDIUM
 	local batchable = options.batchable ~= false -- Default to true
 	local version = options.version or "1.0.0"
-	local versionCompatibility = options.versionCompatibility or VersionCompatibility.BACKWARD
 
 	-- Register event settings
 	self._events[eventName] = {
@@ -1057,7 +1058,6 @@ function NetRay:RegisterEvent(eventName, options)
 		priority = priority,
 		batchable = batchable,
 		version = version,
-		versionCompatibility = versionCompatibility
 	}
 
 	-- Store type definitions for documentation
@@ -1172,6 +1172,7 @@ function NetRay:RequestFromServer(eventName, ...)
 				self._metrics.failedRequests = self._metrics.failedRequests + 1
 				reject("Request timed out after " .. timeout .. " seconds")
 			end
+			
 		end)
 
 
