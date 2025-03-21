@@ -12,12 +12,13 @@
     - Circuit breaker pattern to prevent cascading failures
     - Event prioritization system
     - Event versioning for backward compatibility
-    - Batched events for reducing network overhead
+    - Batched events to reduce network overhead
     - Network metrics and analytics dashboard
     - Secure events with server-side verification
     - Comprehensive documentation generator
     - Enhanced error handling and debugging tools
     - Chainable method calls for cleaner code
+    - Binary Encoding/Decoding when compressing to save memory
     
     Performance Benefits:
     - Minimizes network traffic through intelligent throttling and compression
@@ -27,7 +28,7 @@
     - Batch processing of frequent small events
     - Prioritization of critical network operations
     
-   Created by [Asta] - v2.0.0
+   Created by [Asta] - v2.0.1
 ]]
 
 -- Services
