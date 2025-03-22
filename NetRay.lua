@@ -12,13 +12,12 @@
     - Circuit breaker pattern to prevent cascading failures
     - Event prioritization system
     - Event versioning for backward compatibility
-    - Batched events to reduce network overhead
+    - Batched events for reducing network overhead
     - Network metrics and analytics dashboard
     - Secure events with server-side verification
     - Comprehensive documentation generator
     - Enhanced error handling and debugging tools
     - Chainable method calls for cleaner code
-    - Binary Encoding/Decoding when compressing to save memory
     
     Performance Benefits:
     - Minimizes network traffic through intelligent throttling and compression
@@ -28,7 +27,7 @@
     - Batch processing of frequent small events
     - Prioritization of critical network operations
     
-   Created by [Asta] - v2.0.1
+   Created by [Asta] - v2.0.0
 ]]
 
 -- Services
@@ -81,6 +80,14 @@ local CompressionType = {
 	RLE = 1,
 	LZW = 2,
 	AUTO = 3
+}
+
+-- Event Version Management
+local VersionCompatibility = {
+	STRICT = 1, -- Exact version match required
+	BACKWARD = 2, -- Client can be older than server
+	FORWARD = 3, -- Client can be newer than server
+	ANY = 4 -- Any version accepted
 }
 
 -- Circuit Breaker States
@@ -241,7 +248,7 @@ local function rleCompress(data)
 end
 
 local function rleDecompress(data)
-	data = data
+	data = data[1]
 
 	local decompressed = {}
 	local i = 1
@@ -333,7 +340,7 @@ local function lzwCompress(data)
 end
 
 local function lzwDecompress(data)
-	data = data
+	data = data[1]
 	--	print("Input data length:", #data) -- Debug print to check the input data length
 
 	-- Read dictionary size from header
@@ -527,7 +534,7 @@ local function decompressTableData(data)
 end
 
 -- Enhanced compression function with auto selection
-local function compressString(data, preferredMethod)
+local function compressData(data, preferredMethod)
 	if type(data) ~= "string" and type(data) ~= "table" then
 		return data, CompressionType.NONE
 	end
@@ -606,42 +613,19 @@ local function compressString(data, preferredMethod)
 	end
 end
 
-local function compressData(data, preferredMethod)
-	
-	local encoded = BinaryEncoder.encode(data)
-	
-	if type(encoded) == "string" then
-		return compressString(encoded)
-	else
-		return compressTableData(encoded)
-	end
-end
-
 local function decompressData(data, compressionType)
 
-	local decompressedData
-	if compressionType == CompressionType.RLE then
-		decompressedData = rleDecompress(data)
+	if compressionType == CompressionType.NONE then
+		return data
+	elseif compressionType == CompressionType.RLE then
+		return rleDecompress(data)
 	elseif compressionType == CompressionType.LZW then
-		decompressedData = lzwDecompress(data)
+		return lzwDecompress(data)
+	elseif type(data) == "table" and data.data and data.compressionInfo then
+		return decompressTableData(data)
 	else
-		decompressedData = data
+		return data
 	end
-
-	return BinaryEncoder.decode(decompressedData)
-end
-
-local function deepCopy(original)
-	if type(original) ~= "table" then
-		return original
-	end
-
-	local copy = {}
-	for key, value in pairs(original) do
-		copy[deepCopy(key)] = deepCopy(value)
-	end
-
-	return setmetatable(copy, getmetatable(original))
 end
 
 -- Generate a unique ID for requests
@@ -879,7 +863,7 @@ function NetRay:_setupClientEventReceiving()
 		-- Decompress data if needed
 		local args
 		if eventData.compressed then
-			args = decompressData(eventData.data, eventData.compressionType)
+			args = decompressData(eventData.data, eventData.compressionType[1])
 		else
 			args = eventData.data
 		end
@@ -968,9 +952,9 @@ function NetRay:_setupRequestSystem()
 			local requestId = requestData.id
 			local eventName = requestData.name
 			local args = requestData.args or {}
-			
+
 			if requestData.compressed then
-				args = decompressData(requestData.data, requestData.compressionType)
+				args = decompressData(requestData.data, requestData.compressionType[1])
 			else
 				args = unpack(requestData.args)
 			end
@@ -1048,6 +1032,7 @@ function NetRay:RegisterEvent(eventName, options)
 	local priority = options.priority or Priority.MEDIUM
 	local batchable = options.batchable ~= false -- Default to true
 	local version = options.version or "1.0.0"
+	local versionCompatibility = options.versionCompatibility or VersionCompatibility.BACKWARD
 
 	-- Register event settings
 	self._events[eventName] = {
@@ -1059,6 +1044,7 @@ function NetRay:RegisterEvent(eventName, options)
 		priority = priority,
 		batchable = batchable,
 		version = version,
+		versionCompatibility = versionCompatibility
 	}
 
 	-- Store type definitions for documentation
@@ -1173,7 +1159,6 @@ function NetRay:RequestFromServer(eventName, ...)
 				self._metrics.failedRequests = self._metrics.failedRequests + 1
 				reject("Request timed out after " .. timeout .. " seconds")
 			end
-			
 		end)
 
 
@@ -1267,7 +1252,7 @@ function NetRay:FireServer(eventName, ...)
 	else
 		local jsonData = HttpService:JSONEncode(args)
 		local byteSize = #jsonData
-		
+
 		if byteSize >= COMPRESSION_THRESHOLD then
 			-- Compress the data
 			local compressedData, compressionType = compressData(args)
