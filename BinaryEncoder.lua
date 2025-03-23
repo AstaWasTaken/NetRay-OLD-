@@ -1,6 +1,6 @@
--- BinaryEncoder.lua 
--- By [Asta] - v1.1.1
--- NetRay Dependency 
+-- BinaryEncoder.lua - Fixed Version
+-- Original by [Asta] - v1.0.0
+-- Fixed version v1.1.1
 
 -- Binary type identifiers
 local TYPE = {
@@ -379,12 +379,12 @@ local function binaryDecode(data, options)
 		error("Cannot decode empty data")
 	end
 
-	options = options or {}
+	options = type(options) == "table" and options or {}
 	local index = options.index or 1
 	local references = options.references or {}
 	local maxDepth = options.maxDepth or 100
 	local currentDepth = options.currentDepth or 0
-
+	
 	-- Check for max recursion depth
 	if currentDepth > maxDepth then
 		error("Maximum recursion depth exceeded")
