@@ -23,14 +23,9 @@ To include NetRay in your project:
 1. Copy `NetRay.lua` into your game.
 2. Place it in **ReplicatedStorage**.
 3. Require the module in your scripts:
-4. Run NetRay:Setup()
-
-IMPORTANT
-Make sure to run NetRay:Setup() on the server before trying to connect to any events on the client or server!!
 
 ```lua
 local NetRay = require(game:GetService("ReplicatedStorage").NetRay)
-NetRay:Setup()
 ```
 
 ---
