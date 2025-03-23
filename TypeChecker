@@ -1,0 +1,79 @@
+-- Type checking utilities for typed events
+-- Asta
+-- NetRay
+
+local TypeChecker = {}
+
+function TypeChecker.isType(value, expectedType)
+	local valueType = type(value)
+
+	-- Handle basic types
+	if expectedType == "string" or expectedType == "number" or expectedType == "boolean" or 
+		expectedType == "function" or expectedType == "nil" or expectedType == "userdata" then
+		return valueType == expectedType
+	end
+
+	-- Handle "any" type
+	if expectedType == "any" then
+		return true
+	end
+
+	-- Handle table type
+	if expectedType == "table" then
+		return valueType == "table"
+	end
+
+	-- Handle array type (table with sequential numeric indices)
+	if expectedType == "array" then
+		if valueType ~= "table" then
+			return false
+		end
+		local count = 0
+		for _ in pairs(value) do
+			count = count + 1
+		end
+		return count == #value
+	end
+
+	-- Handle union types (e.g., "string|number")
+	if string.find(expectedType, "|") then
+		local unionTypes = {}
+		for unionType in string.gmatch(expectedType, "([^|]+)") do
+			unionTypes[unionType:match("^%s*(.-)%s*$")] = true -- trim whitespace
+		end
+
+		for unionType in pairs(unionTypes) do
+			if TypeChecker.isType(value, unionType) then
+				return true
+			end
+		end
+
+		return false
+	end
+
+	-- Handle instance type checking
+	if string.sub(expectedType, 1, 9) == "Instance<" then
+		local className = string.sub(expectedType, 10, -2) -- Remove "Instance<" and ">"
+		return typeof(value) == "Instance" and value:IsA(className)
+	end
+
+	-- Default to false for unknown types
+	return false
+end
+
+function TypeChecker.validateArgs(args, typeDefinitions)
+	if not typeDefinitions then
+		return true
+	end
+
+	for i, expectedType in ipairs(typeDefinitions) do
+		if not TypeChecker.isType(args[i], expectedType) then
+			return false, "Argument " .. i .. " expected type " .. expectedType .. 
+				" but got " .. type(args[i])
+		end
+	end
+
+	return true
+end
+
+return TypeChecker
