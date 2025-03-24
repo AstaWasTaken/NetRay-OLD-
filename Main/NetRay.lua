@@ -1,43 +1,44 @@
 --[[
-    NetRay 2.0 - Enhanced Roblox Networking Library
-    
-    A powerful, optimized networking library that provides advanced tools
-    while maintaining the familiar feel of standard Roblox RemoteEvents.
-    
-    Key Features:
-    - Intuitive API with Roblox-native patterns
-    - Promise-based request/response pattern
-    - Typed events support for Luau
-    - Automatic compression optimization
-    - Circuit breaker pattern to prevent cascading failures
-    - Event prioritization system
-    - Event versioning for backward compatibility
-    - Batched events for reducing network overhead
-    - Network metrics and analytics dashboard
-    - Secure events with server-side verification
-    - Comprehensive documentation generator
-    - Enhanced error handling and debugging tools
-    - Chainable method calls for cleaner code
-    
-    Performance Benefits:
-    - Minimizes network traffic through intelligent throttling and compression
-    - Prevents event spam with configurable rate limits
-    - Reduces memory usage through optimized event handling
-    - Dynamic adjustment of network parameters based on server load
-    - Batch processing of frequent small events
-    - Prioritization of critical network operations
-    
-   Created by [Asta] - v2.0.0
-]]
+     NetRay 2.0 - Enhanced Roblox Networking Library
+     
+     A powerful, optimized networking library that provides advanced tools
+     while maintaining the familiar feel of standard Roblox RemoteEvents.
+     
+     Key Features:
+     - Intuitive API with Roblox-native patterns
+     - Promise-based request/response pattern
+     - Typed events support for Luau
+     - Automatic compression optimization
+     - Circuit breaker pattern to prevent cascading failures
+     - Event prioritization system
+     - Event versioning for backward compatibility
+     - Batched events for reducing network overhead
+     - Network metrics and analytics dashboard
+     - Secure events with server-side verification
+     - Comprehensive documentation generator
+     - Enhanced error handling and debugging tools
+     - Chainable method calls for cleaner code
+     
+     Performance Benefits:
+     - Minimizes network traffic through intelligent throttling and compression
+     - Prevents event spam with configurable rate limits
+     - Reduces memory usage through optimized event handling
+     - Dynamic adjustment of network parameters based on server load
+     - Batch processing of frequent small events
+     - Prioritization of critical network operations
+     
+    Created by [Asta] - v2.0.2
+ ]]
 
 -- Services
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService") -- For JSON encoding/decoding
 local Stats = game:GetService("Stats") -- For network stats
 local Bits = require(script.Bits) -- Utility functions for bit operations optimized for Luau 
 local BinaryEncoder = require(script.BinaryEncoder) -- Utility function for custom binary encoding and decoding
+local Promise = require(script.Promise)
+local TypeChecker = require(script.TypeChecker)
 
 -- Environment detection
 local IS_SERVER = RunService:IsServer()
@@ -54,18 +55,18 @@ local CIRCUIT_BREAKER_THRESHOLD = 5 -- failures before circuit opens
 local CIRCUIT_BREAKER_RESET_TIME = 30 -- seconds before trying again
 
 -- Type definitions for documentation
---[=[
-    @type EventPriority "high" | "medium" | "low"
-    @within NetRay
-]=]
---[=[
-    @type CompressionType "none" | "rle" | "lzw" | "auto"
-    @within NetRay
-]=]
---[=[
-    @type RequestOptions {timeout: number?, priority: EventPriority?}
-    @within NetRay
-]=]
+ --[=[
+     @type EventPriority "high" | "medium" | "low"
+     @within NetRay
+ ]=]
+ --[=[
+     @type CompressionType "none" | "rle" | "lzw" | "auto"
+     @within NetRay
+ ]=]
+ --[=[
+     @type RequestOptions {timeout: number?, priority: EventPriority?}
+     @within NetRay
+ ]=]
 
 -- Priority Enum
 local Priority = {
@@ -82,129 +83,12 @@ local CompressionType = {
 	AUTO = 3
 }
 
--- Event Version Management
-local VersionCompatibility = {
-	STRICT = 1, -- Exact version match required
-	BACKWARD = 2, -- Client can be older than server
-	FORWARD = 3, -- Client can be newer than server
-	ANY = 4 -- Any version accepted
-}
-
 -- Circuit Breaker States
 local CircuitState = {
 	CLOSED = 1, -- Normal operation
 	OPEN = 2, -- Failing, not accepting events
 	HALF_OPEN = 3 -- Testing if system recovered
 }
-
--- Promise Implementation
-local Promise = {}
-Promise.__index = Promise
-
-function Promise.new(executor)
-	local self = setmetatable({
-		_state = "pending",
-		_value = nil,
-		_reason = nil,
-		_thenCallbacks = {},
-		_catchCallbacks = {}
-	}, Promise)
-
-	local function resolve(value)
-		if self._state ~= "pending" then return end
-		self._state = "fulfilled"
-		self._value = value
-
-		for _, callback in ipairs(self._thenCallbacks) do
-			task.spawn(callback, value)
-		end
-	end
-
-	local function reject(reason)
-		if self._state ~= "pending" then return end
-		self._state = "rejected"
-		self._reason = reason
-
-		for _, callback in ipairs(self._catchCallbacks) do
-			task.spawn(callback, reason)
-		end
-	end
-
-	task.spawn(function()
-		local success, err = pcall(executor, resolve, reject)
-		if not success then
-			reject(err)
-		end
-	end)
-
-	return self
-end
-
-function Promise:andThen(callback)
-	if self._state == "fulfilled" then
-		task.spawn(callback, self._value)
-	elseif self._state == "pending" then
-		table.insert(self._thenCallbacks, callback)
-	end
-	return self
-end
-
-function Promise:catch(callback)
-	if self._state == "rejected" then
-		task.spawn(callback, self._reason)
-	elseif self._state == "pending" then
-		table.insert(self._catchCallbacks, callback)
-	end
-	return self
-end
-
-function Promise:finally(callback)
-	local function onFinally()
-		callback()
-	end
-
-	self:andThen(onFinally)
-	self:catch(onFinally)
-
-	return self
-end
-
-function Promise.resolve(value)
-	return Promise.new(function(resolve)
-		resolve(value)
-	end)
-end
-
-function Promise.reject(reason)
-	return Promise.new(function(_, reject)
-		reject(reason)
-	end)
-end
-
-function Promise.all(promises)
-	return Promise.new(function(resolve, reject)
-		local results = {}
-		local remaining = #promises
-
-		if remaining == 0 then
-			resolve({})
-			return
-		end
-
-		for i, promise in ipairs(promises) do
-			promise:andThen(function(value)
-				results[i] = value
-				remaining = remaining - 1
-
-				if remaining == 0 then
-					resolve(results)
-				end
-			end):catch(function(reason)
-				reject(reason)
-			end)
-		end
-	end)
-end
 
 -- Run-Length Encoding (RLE) Compression
 local function rleCompress(data)
@@ -637,84 +521,9 @@ local function generateRequestId()
 	end)
 end
 
--- Type checking utilities for typed events
-local TypeChecker = {}
-
-function TypeChecker.isType(value, expectedType)
-	local valueType = type(value)
-
-	-- Handle basic types
-	if expectedType == "string" or expectedType == "number" or expectedType == "boolean" or 
-		expectedType == "function" or expectedType == "nil" or expectedType == "userdata" then
-		return valueType == expectedType
-	end
-
-	-- Handle "any" type
-	if expectedType == "any" then
-		return true
-	end
-
-	-- Handle table type
-	if expectedType == "table" then
-		return valueType == "table"
-	end
-
-	-- Handle array type (table with sequential numeric indices)
-	if expectedType == "array" then
-		if valueType ~= "table" then
-			return false
-		end
-		local count = 0
-		for _ in pairs(value) do
-			count = count + 1
-		end
-		return count == #value
-	end
-
-	-- Handle union types (e.g., "string|number")
-	if string.find(expectedType, "|") then
-		local unionTypes = {}
-		for unionType in string.gmatch(expectedType, "([^|]+)") do
-			unionTypes[unionType:match("^%s*(.-)%s*$")] = true -- trim whitespace
-		end
-
-		for unionType in pairs(unionTypes) do
-			if TypeChecker.isType(value, unionType) then
-				return true
-			end
-		end
-
-		return false
-	end
-
-	-- Handle instance type checking
-	if string.sub(expectedType, 1, 9) == "Instance<" then
-		local className = string.sub(expectedType, 10, -2) -- Remove "Instance<" and ">"
-		return typeof(value) == "Instance" and value:IsA(className)
-	end
-
-	-- Default to false for unknown types
-	return false
-end
-
-function TypeChecker.validateArgs(args, typeDefinitions)
-	if not typeDefinitions then
-		return true
-	end
-
-	for i, expectedType in ipairs(typeDefinitions) do
-		if not TypeChecker.isType(args[i], expectedType) then
-			return false, "Argument " .. i .. " expected type " .. expectedType .. 
-				" but got " .. type(args[i])
-		end
-	end
-
-	return true
-end
-
 -- Main NetRay module
 local NetRay = {
-	_version = "2.0.0",
+	_version = "2.0.2",
 	_events = {},
 	_remotes = {},
 	_middleware = {},
@@ -788,17 +597,65 @@ function NetRay:Setup()
 		responseRemote.Name = "Responses"
 		responseRemote.Parent = netFolder
 	end
+	
+	-- Create a single RemoteEvent for syncing
+	local SyncRemote = netFolder:FindFirstChild("Sync")
+	if not SyncRemote then
+		SyncRemote = Instance.new("RemoteEvent")
+		SyncRemote.Name = "Sync"
+		SyncRemote.Parent = netFolder
+	end
 
+	
 	-- Store references
 	self._batchRemote = batchRemote
 	self._requestRemote = requestRemote
 	self._responseRemote = responseRemote
-
+	self._SyncRemote = SyncRemote
+	
 	-- Set up batch processing
 	self:_setupBatchProcessing()
 
 	-- Set up request/response system
 	self:_setupRequestSystem()
+
+	return self
+end
+
+-- Register event (server-side)
+function NetRay:RegisterEvent(eventName, options)
+	if not IS_SERVER then
+		error("NetRay:RegisterEvent() can only be called from the server")
+		return self
+	end
+
+	options = options or {}
+	local rateLimit = options.rateLimit or DEFAULT_RATE_LIMIT
+	local throttleWait = options.throttleWait or DEFAULT_THROTTLE_WAIT
+	local middleware = options.middleware or {}
+	local typeDefinitions = options.typeDefinitions
+	local priority = options.priority or Priority.MEDIUM
+	local batchable = options.batchable ~= false -- Default to true
+	local version = options.version or "2.0.2"
+
+	-- Register event settings
+	self._events[eventName] = {
+		name = eventName,
+		rateLimit = rateLimit,
+		throttleWait = throttleWait,
+		middleware = middleware,
+		typeDefinitions = typeDefinitions,
+		priority = priority,
+		batchable = batchable,
+		version = version,
+	}
+
+	self._SyncRemote:FireAllClients(self._events)
+	
+	-- Store type definitions for documentation
+	if typeDefinitions then
+		self._typeDefinitions[eventName] = typeDefinitions
+	end
 
 	return self
 end
@@ -820,7 +677,7 @@ function NetRay:_setupBatchProcessing()
 			for _, eventData in ipairs(batch) do
 				local eventName = eventData.name
 				local args = eventData.args or {}
-
+				
 				-- Process as if it was a regular event
 				self:_handleServerReceive(eventName, player, unpack(args))
 			end
@@ -918,7 +775,7 @@ function NetRay:_processBatches()
 			end
 
 			-- Compress the batch if it's large enough
-			local batchSize = #HttpService:JSONEncode(batch)
+			local batchSize = #BinaryEncoder.encode(batch)
 			if batchSize >= COMPRESSION_THRESHOLD then
 				local compressedData, compressionType = compressData(batch)
 				self._batchRemote:FireServer({
@@ -927,7 +784,7 @@ function NetRay:_processBatches()
 					compressionType = compressionType
 				})
 				-- Update metrics
-				self._metrics.compressionSavings = self._metrics.compressionSavings + (batchSize - #HttpService:JSONEncode(sanitizeData(compressedData)))
+				self._metrics.compressionSavings = self._metrics.compressionSavings + (batchSize - #BinaryEncoder.encode(sanitizeData(batch)))
 			else
 				-- Send uncompressed
 				self._batchRemote:FireServer(batch)
@@ -1017,44 +874,6 @@ function NetRay:_setupRequestSystem()
 	end
 end
 
--- Register event (server-side)
-function NetRay:RegisterEvent(eventName, options)
-	if not IS_SERVER then
-		error("NetRay:RegisterEvent() can only be called from the server")
-		return self
-	end
-
-	options = options or {}
-	local rateLimit = options.rateLimit or DEFAULT_RATE_LIMIT
-	local throttleWait = options.throttleWait or DEFAULT_THROTTLE_WAIT
-	local middleware = options.middleware or {}
-	local typeDefinitions = options.typeDefinitions
-	local priority = options.priority or Priority.MEDIUM
-	local batchable = options.batchable ~= false -- Default to true
-	local version = options.version or "1.0.0"
-	local versionCompatibility = options.versionCompatibility or VersionCompatibility.BACKWARD
-
-	-- Register event settings
-	self._events[eventName] = {
-		name = eventName,
-		rateLimit = rateLimit,
-		throttleWait = throttleWait,
-		middleware = middleware,
-		typeDefinitions = typeDefinitions,
-		priority = priority,
-		batchable = batchable,
-		version = version,
-		versionCompatibility = versionCompatibility
-	}
-
-	-- Store type definitions for documentation
-	if typeDefinitions then
-		self._typeDefinitions[eventName] = typeDefinitions
-	end
-
-	return self
-end
-
 -- Register a request handler (server-side)
 function NetRay:RegisterRequestHandler(eventName, handler, options)
 	if not IS_SERVER then
@@ -1068,6 +887,7 @@ function NetRay:RegisterRequestHandler(eventName, handler, options)
 
 	-- Register the handler
 	self._requestHandlers[eventName] = handler
+	self._events[eventName].callback = handler
 
 	-- Store type definitions
 	if typeDefinitions then
@@ -1250,7 +1070,7 @@ function NetRay:FireServer(eventName, ...)
 	if eventConfig.batchable then
 		self:_addToBatchQueue(eventName, eventConfig.priority, unpack(args))
 	else
-		local jsonData = HttpService:JSONEncode(args)
+		local jsonData = BinaryEncoder.encode(args)
 		local byteSize = #jsonData
 
 		if byteSize >= COMPRESSION_THRESHOLD then
@@ -1265,7 +1085,7 @@ function NetRay:FireServer(eventName, ...)
 			})
 
 			-- Update metrics
-			self._metrics.compressionSavings = self._metrics.compressionSavings + (byteSize - #HttpService:JSONEncode(sanitizeData(compressedData)))
+			self._metrics.compressionSavings = self._metrics.compressionSavings + (byteSize - #BinaryEncoder.encode(sanitizeData(compressedData)))
 		else
 			-- Send uncompressed
 			self._requestRemote:FireServer({
@@ -1330,14 +1150,14 @@ function NetRay:FireClient(eventName, player, ...)
 	self._metrics.eventCounts[eventName] = self._metrics.eventCounts[eventName] + 1
 
 	-- Determine if compression needed based on data size
-	local jsonData = HttpService:JSONEncode(args)
+	local jsonData = BinaryEncoder.encode(args)
 	local byteSize = #jsonData
 	self._metrics.totalBytesSent = self._metrics.totalBytesSent + byteSize
 
 	if byteSize >= COMPRESSION_THRESHOLD then
 		-- Compress the data
 		local compressedData, compressionType = compressData(args)
-		local compressedSize = #HttpService:JSONEncode(sanitizeData(compressedData))
+		local compressedSize = #BinaryEncoder.encode(sanitizeData(compressedData))
 		self._metrics.compressionSavings = self._metrics.compressionSavings + (byteSize - compressedSize)
 
 		-- Create the event data structure
@@ -1445,7 +1265,9 @@ function NetRay:_handleServerReceive(eventName, player, ...)
 			end
 		end
 	end
-
+	
+	print(self._events[eventName].callback)
+	
 	-- Trigger event for listeners
 	if eventConfig.callback then
 		eventConfig.callback(player, unpack(args))
@@ -1637,7 +1459,7 @@ function NetRay:GenerateDocumentation()
 			throttleWait = config.throttleWait or DEFAULT_THROTTLE_WAIT,
 			priority = config.priority or Priority.MEDIUM,
 			batchable = config.batchable ~= false,
-			version = config.version or "2.0.0"
+			version = config.version or "2.0.2"
 		}
 
 		-- Add type definitions if available
@@ -1671,6 +1493,23 @@ function NetRay:GenerateDocumentation()
 	return docs
 end
 
+function NetRay:Sync()
+	self._SyncRemote.OnClientEvent:Connect(function(serverTable)
+		for eventName, serverArgs in pairs(serverTable) do
+			if self._events[eventName] then
+				-- Update existing event configurations
+				for key, value in pairs(serverArgs) do
+					self._events[eventName][key] = value
+				end
+			else
+				-- Add new event if it doesn't exist
+				self._events[eventName] = serverArgs
+			end
+		end
+		print(self._events)
+	end)
+end
+
 -- Create a RequestOptions object
 function NetRay.RequestOptions(options)
 	options = options or {}
@@ -1678,41 +1517,6 @@ function NetRay.RequestOptions(options)
 	options.timeout = options.timeout or DEFAULT_TIMEOUT
 	options.priority = options.priority or Priority.MEDIUM
 	return options
-end
-
--- Initialize module based on environment
-if IS_SERVER then
-	NetRay:Setup()
-else
-	-- Wait for remotes to be created on the client
-	task.spawn(function()
-		local netFolder = ReplicatedStorage:WaitForChild("NetRayEvents", 10)
-		if not netFolder then
-			warn("[NetRay] Failed to find NetRayEvents folder after 10 seconds")
-			return
-		end
-
-		local batchFolder = netFolder:WaitForChild("NetRayBatched", 5)
-		if batchFolder then
-			NetRay._batchRemote = batchFolder:WaitForChild("BatchedEvents", 5)
-		end
-
-		NetRay._requestRemote = netFolder:WaitForChild("Requests", 5)
-		NetRay._responseRemote = netFolder:WaitForChild("Responses", 5)
-
-		if NetRay._batchRemote and NetRay._requestRemote and NetRay._responseRemote then
-			-- Set up batch processing
-			NetRay:_setupBatchProcessing()
-
-			-- Set up request/response system
-			NetRay:_setupRequestSystem()
-
-			-- Set up client event receiving
-			NetRay:_setupClientEventReceiving()
-		else
-			warn("[NetRay] Failed to find all required RemoteEvents")
-		end
-	end)
 end
 
 -- Add ability to create namespaces for organization
@@ -1743,6 +1547,48 @@ function NetRay:CreateNamespace(namespaceName)
 	end
 
 	return namespace
+end
+
+-- Initialize module based on environment
+if IS_SERVER then
+	NetRay:Setup()
+	Players.PlayerAdded:Connect(function(player)	
+		NetRay._SyncRemote:FireClient(player,NetRay._events)	-- Syncing already registered events
+	end)
+else
+	-- Wait for remotes to be created on the client
+	task.spawn(function()
+		local netFolder = ReplicatedStorage:WaitForChild("NetRayEvents")
+		if not netFolder then
+			warn("[NetRay] Failed to find NetRayEvents folder")
+			return
+		end
+
+		local batchFolder = netFolder:WaitForChild("NetRayBatched")
+		if batchFolder then
+			NetRay._batchRemote = batchFolder:WaitForChild("BatchedEvents")
+		end
+
+		NetRay._requestRemote = netFolder.Requests
+		NetRay._responseRemote = netFolder.Responses
+		NetRay._SyncRemote = netFolder.Sync
+
+		if NetRay._batchRemote and NetRay._requestRemote and NetRay._responseRemote and NetRay._SyncRemote then
+			-- Setup Syncing
+			NetRay:Sync()
+			
+			-- Set up batch processing
+			NetRay:_setupBatchProcessing()
+
+			-- Set up request/response system
+			NetRay:_setupRequestSystem()
+
+			-- Set up client event receiving
+			NetRay:_setupClientEventReceiving()
+		else
+			warn("[NetRay] Failed to find all required RemoteEvents")
+		end
+	end)
 end
 
 return NetRay
