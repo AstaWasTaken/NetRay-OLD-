@@ -1,4 +1,4 @@
-# NetRay 2.0 - Advanced Roblox Networking Library
+# NetRay 2.0 - Advanced Roblox Networking Library [DEPRECATED]
 
 ## Overview
 NetRay is a **powerful, optimized networking library** for Roblox that enhances RemoteEvents and RemoteFunctions with advanced features such as **batched events, event prioritization, automatic compression, and circuit breaker protection**.
